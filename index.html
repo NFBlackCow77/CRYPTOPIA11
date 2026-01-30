@@ -20,7 +20,6 @@
         .bg-neon-green { background-color: #39ff14; box-shadow: 0 0 20px rgba(57, 255, 20, 0.5); }
         .border-neon-green { border-color: #39ff14; box-shadow: 0 0 10px rgba(57, 255, 20, 0.3); }
         .hover-neon-shadow:hover { box-shadow: 0 0 30px rgba(57, 255, 20, 0.4); }
-        
         .bg-grid {
             background-image: linear-gradient(rgba(57, 255, 20, 0.05) 1px, transparent 1px),
             linear-gradient(90deg, rgba(57, 255, 20, 0.05) 1px, transparent 1px);
@@ -48,6 +47,25 @@
             color: #39ff14;
             text-shadow: 0 0 5px rgba(57, 255, 20, 0.7);
         }
+
+        /* 스캔 로그 스타일 */
+        .scan-log {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.8rem;
+            color: #00ff00;
+            text-align: left;
+            height: 150px;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #333;
+            padding: 10px;
+            margin-top: 15px;
+            border-radius: 5px;
+        }
+        .log-item { margin-bottom: 2px; }
+        .log-warn { color: #ffff00; }
+        .log-danger { color: #ff0000; font-weight: bold; }
+        .log-safe { color: #00ffff; }
     </style>
 </head>
 <body class="antialiased selection:bg-neon-green selection:text-black">
@@ -318,16 +336,21 @@
     </div>
 
     <div id="washing-modal" class="fixed inset-0 z-[70] hidden flex items-center justify-center bg-black/95 backdrop-blur-md">
-        <div class="w-full max-w-md bg-gray-900 border-2 border-neon-green rounded-2xl p-8 text-center relative shadow-[0_0_50px_rgba(57,255,20,0.3)]">
+        <div class="w-full max-w-md bg-gray-900 border-2 border-neon-green rounded-2xl p-6 text-center relative shadow-[0_0_50px_rgba(57,255,20,0.3)]">
             <button onclick="closeWashing()" class="absolute top-4 right-4 text-gray-500 hover:text-white">✕</button>
             
             <div id="wash-loading">
-                <div class="text-6xl mb-6 animate-spin">🌀</div>
-                <h3 class="text-2xl font-bold text-white mb-2" id="wash-text">INITIALIZING...</h3>
-                <p class="text-gray-400 text-sm">Please wait while we clean your dirty wallet.</p>
+                <div class="text-6xl mb-4 animate-spin">🌀</div>
+                <h3 class="text-xl font-bold text-white mb-2" id="wash-text">INITIALIZING...</h3>
+                <p class="text-gray-400 text-xs mb-4">Analyzing wallet contents...</p>
                 
-                <div class="w-full bg-gray-800 h-2 mt-6 rounded-full overflow-hidden">
+                <div class="w-full bg-gray-800 h-2 rounded-full overflow-hidden mb-4">
                     <div id="wash-bar" class="bg-neon-green h-full w-0 transition-all duration-300"></div>
+                </div>
+
+                <div class="scan-log no-scrollbar" id="scan-log-area">
+                    <div class="log-item">> System initialized.</div>
+                    <div class="log-item">> Connecting to mainnet...</div>
                 </div>
             </div>
 
@@ -335,11 +358,11 @@
                 <div class="text-6xl mb-6 animate-bounce">✨</div>
                 <h3 class="text-2xl font-bold text-neon-green mb-4" data-lang="wash_done_title">WASHING COMPLETE!</h3>
                 <p class="text-gray-300 mb-8 leading-relaxed" data-lang="wash_done_desc">
-                    Your wallet is now sparkling clean.<br>
-                    It's empty inside. Fill it with $CTP.
+                    All shitcoins have been processed.<br>
+                    Your wallet is clean. Fill it with $CTP.
                 </p>
                 <a href="#" class="block w-full bg-neon-green text-black font-black text-xl py-4 rounded-full hover:bg-white transition transform hover:scale-105 shadow-[0_0_20px_rgba(57,255,20,0.6)]" data-lang="wash_btn_buy">
-                    BUY $CTP NOW (구매하러 가기)
+                    BUY $CTP NOW
                 </a>
             </div>
         </div>
@@ -366,39 +389,105 @@
             document.body.style.overflow = 'auto';
         }
 
-        // Washing Machine Logic
-        function startWashing() {
+        // --- Washing Logic (Strict Check & Simulation) ---
+        async function startWashing() {
+            // 1. 메타마스크 설치 여부 확인
+            if (typeof window.ethereum === 'undefined') {
+                alert("MetaMask is not installed! (메타마스크를 설치해주세요)");
+                window.open('https://metamask.io/download.html', '_blank');
+                return;
+            }
+
+            // 2. 연결 상태 확인 (Accounts 체크)
+            try {
+                const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                if (accounts.length === 0) {
+                    // 연결 안됨 -> 경고 후 연결 시도
+                    alert("Wallet not connected! Please connect your wallet first.\n(지갑이 연결되지 않았습니다. 지갑을 먼저 연결해주세요.)");
+                    connectWallet(); 
+                    return;
+                }
+                
+                // 3. 연결 확인됨 -> 세탁 시작 (주소 전달)
+                runWashingSimulation(accounts[0]);
+
+            } catch (error) {
+                console.error(error);
+                alert("Error checking wallet connection.");
+            }
+        }
+
+        function runWashingSimulation(address) {
             const modal = document.getElementById('washing-modal');
             const loading = document.getElementById('wash-loading');
             const done = document.getElementById('wash-done');
             const text = document.getElementById('wash-text');
             const bar = document.getElementById('wash-bar');
+            const logArea = document.getElementById('scan-log-area');
 
             modal.classList.remove('hidden');
             loading.classList.remove('hidden');
             done.classList.add('hidden');
             bar.style.width = '0%';
             text.innerText = "SCANNING WALLET...";
+            
+            // 로그 초기화
+            logArea.innerHTML = `<div class="log-item">> Target: ${address.substring(0,6)}...${address.substring(address.length-4)}</div>`;
+
+            // 시나리오 타임라인
+            const shitcoins = ["DogeKiller", "SafeMoon2", "ElonSperm", "PepeClone", "SquidGameToken", "LunaClassic", "BitConnect"];
+            
+            setTimeout(() => {
+                bar.style.width = '20%';
+                addLog("Scanning ETH balance...", "normal");
+            }, 500);
 
             setTimeout(() => {
-                bar.style.width = '30%';
+                bar.style.width = '40%';
+                addLog("Found ETH (Major Coin) -> [SAFE] Skipping...", "safe");
+                addLog("Found USDT (Major Coin) -> [SAFE] Skipping...", "safe");
+            }, 1500);
+
+            setTimeout(() => {
+                bar.style.width = '60%';
                 text.innerText = "DETECTING SHITCOINS...";
-            }, 800);
+                // 랜덤 똥코인 발견 연출
+                const coin1 = shitcoins[Math.floor(Math.random() * shitcoins.length)];
+                addLog(`⚠️ DETECTED: ${coin1} -> [TRASH]`, "danger");
+            }, 2500);
 
             setTimeout(() => {
-                bar.style.width = '70%';
-                text.innerText = "REMOVING TEARS & LOSSES...";
-            }, 2000);
+                bar.style.width = '80%';
+                const coin2 = shitcoins[Math.floor(Math.random() * shitcoins.length)];
+                addLog(`⚠️ DETECTED: ${coin2} -> [TRASH]`, "danger");
+                addLog("Washing algorithm initiated...", "warn");
+            }, 3500);
 
             setTimeout(() => {
                 bar.style.width = '100%';
-                text.innerText = "FINAL POLISHING...";
-            }, 3000);
+                text.innerText = "FINALIZING...";
+                addLog(">> DELETING LOSSES...", "danger");
+                addLog(">> SUCCESS.", "safe");
+            }, 4500);
 
             setTimeout(() => {
                 loading.classList.add('hidden');
                 done.classList.remove('hidden');
-            }, 4000);
+            }, 5500);
+        }
+
+        function addLog(msg, type) {
+            const logArea = document.getElementById('scan-log-area');
+            const div = document.createElement('div');
+            div.className = 'log-item';
+            div.innerText = "> " + msg;
+            
+            if (type === 'danger') div.classList.add('log-danger');
+            if (type === 'safe') div.classList.add('log-safe');
+            if (type === 'warn') div.classList.add('log-warn');
+            
+            logArea.appendChild(div);
+            logArea.scrollTop = logArea.scrollHeight; // 자동 스크롤
         }
 
         function closeWashing() {
@@ -418,13 +507,12 @@
                     const shortAddr = account.substring(0, 6) + "..." + account.substring(account.length - 4);
                     btn.innerText = shortAddr;
                     isWalletConnected = true;
-                    console.log("Connected:", account);
                 } catch (error) {
                     console.error(error);
-                    alert("지갑 연결이 취소되었거나 실패했습니다.");
+                    alert("Connection failed.");
                 }
             } else {
-                alert("메타마스크가 설치되어 있지 않습니다. (MetaMask is not installed)");
+                alert("MetaMask is not installed.");
                 window.open('https://metamask.io/download.html', '_blank');
             }
         }
@@ -473,7 +561,6 @@
                 wp_phase4_title: "Phase 4: 다림질 (Ironing)",
                 wp_phase4_desc: "To The Moon (달나라 여행)",
                 wp_close: "닫기 (CLOSE)",
-                // Washing Machine Translations
                 wash_done_title: "세탁 완료!",
                 wash_done_desc: "지갑이 아주 깨끗해졌습니다.<br>(텅 비었네요) 이제 $CTP로 채우세요.",
                 wash_btn_buy: "$CTP 구매하러 가기"
@@ -520,7 +607,6 @@
                 wp_phase4_title: "Phase 4: Ironing",
                 wp_phase4_desc: "To The Moon",
                 wp_close: "CLOSE",
-                // Washing Machine Translations
                 wash_done_title: "WASHING COMPLETE!",
                 wash_done_desc: "Your wallet is now sparkling clean.<br>It's empty inside. Fill it with $CTP.",
                 wash_btn_buy: "BUY $CTP NOW"
